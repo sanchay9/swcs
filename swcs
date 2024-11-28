@@ -5,20 +5,59 @@
 CONF=~/.cache/swcs.json
 if [ ! -f "$CONF" ] || [ "$1" = "init" ]; then
     jq -n '{
-    "mode": "light",
-    "light_theme": "light",
-    "dark_theme": "dark",
-    "light_gtk_theme": "Adwaita",
-    "dark_gtk_theme": "Adwaita-dark",
-    "light_neovim_theme": "tokyonight",
-    "dark_neovim_theme": "tokyonight",
-    "light_kitty_theme": "tokyonight",
-    "dark_kitty_theme": "tokyonight",
-    "light_kvantum_theme": "Adwaita",
-    "dark_kvantum_theme": "Adwaita-dark",
-    "light_wallpaper": ["~/pix/wallpapers/1.jpg", "center"],
-    "dark_wallpaper": ["~/pix/wallpapers/2.jpg", "center"]
-}' >"$CONF"
+        "border": 1,
+        "rounding": 13,
+        "dark_theme": "tokyonight",
+        "light_theme": "light",
+        "wallpaper": {
+            "light": [ "/mnt/data/misc/sort/walls a/13.jpeg", "fill" ],
+            "tokyonight": [ "/mnt/data/Pictures/tokyonight/27281.png", "fill" ],
+            "catppuccin": [ "/mnt/WindowsD/Pictures/tokyonight/27281.png", "fill" ],
+            "onedark": [ "/mnt/WindowsD/Pictures/onedark/27.png", "fill" ],
+            "gruvbox": [ "/mnt/WindowsD/Pictures/gruvbox/gruv-4.jpg", "fill" ],
+            "everforest": [ "/mnt/WindowsD/Pictures/gruvbox/gruv-4.jpg", "fill" ]
+        },
+        "gtk_theme": {
+            "light": "Catppuccin-Latte-Standard-Blue-Light",
+            "tokyonight": "Tokyonight-Dark-BL",
+            "catppuccin": "Tokyonight-Dark-BL",
+            "onedark": "onedark",
+            "gruvbox": "Gruvbox-Dark-BL",
+            "everforest": "Everforest-Dark-BL"
+        },
+        "icon_theme": {
+            "light": "Adwaita",
+            "tokyonight": "Tokyonight-Dark-BL",
+            "catppuccin": "Tokyonight-Dark-BL",
+            "onedark": "onedark",
+            "gruvbox": "Gruvbox-Dark-BL",
+            "everforest": "Everforest-Dark-BL"
+        },
+        "kitty_theme": {
+            "light": "Catppuccin-Latte",
+            "tokyonight": "Tokyo Night",
+            "catppuccin": "Catppuccin-Mocha",
+            "onedark": "One Dark",
+            "gruvbox": "Gruvchad",
+            "everforest": "Everforest Dark Hard"
+        },
+        "kvantum_theme": {
+            "light": "MateriaLight",
+            "tokyonight": "Aesthetic-Night",
+            "catppuccin": "Aesthetic-Night",
+            "onedark": "Aesthetic-Night",
+            "gruvbox": "Aesthetic-Night",
+            "everforest": "Aesthetic-Night"
+        },
+        "neovim_theme": {
+            "light": "catppuccin-latte",
+            "tokyonight": "tokyonight-night",
+            "catppuccin": "catppuccin-macchiato",
+            "onedark": "Aesthetic-Night",
+            "gruvbox": "Aesthetic-Night",
+            "everforest": "Aesthetic-Night"
+        }
+    }' >"$CONF"
     echo "created new config"
     exit 0
 fi
@@ -34,21 +73,22 @@ done
 
 set_neovim() {
     NEOVIM_THEME=$(jq -r '.neovim_theme["'"$THEME"'"]' "$CONF")
-    for i in ${XDG_RUNTIME_DIR:-${TMPDIR}nvim.${USER}}/*/nvim.*.0; do
+
+    if [ "$(uname)" = "Darwin" ]; then
+        mapfile -t SOCKETS < <(fd "nvim.*.0" "$TMPDIR" --type s)
+    else
+        mapfile -t SOCKETS < <(fd "nvim.*.0" "$XDG_RUNTIME_DIR" --type s)
+    fi
+    for i in "${SOCKETS[@]}"; do
         nvim --server "$i" --remote-send "<cmd>colorscheme $NEOVIM_THEME<cr>" >/dev/null 2>&1
         nvim --server "$i" --remote-send "<cmd>Lazy reload lualine.nvim<cr>" >/dev/null 2>&1
     done
-
 }
 
 set_wallpaper() {
     WALLPAPER_PATH=$(jq -r '.wallpaper["'"$THEME"'"][0]' "$CONF")
     WALLPAPER_MODE=$(jq -r '.wallpaper["'"$THEME"'"][1]' "$CONF")
-    if [ "$(uname)" = "Linux" ]; then
-        setwall "$WALLPAPER_PATH" "$WALLPAPER_MODE" # TODO: $(find ~/pix | shuf -n 1)
-    else
-        setwall "$WALLPAPER_PATH"
-    fi
+    setwall "$WALLPAPER_PATH" "$WALLPAPER_MODE" # TODO: $(find ~/pix | shuf -n 1)
 }
 
 set_gtk() {
@@ -69,7 +109,7 @@ set_dunst() {
 
 set_kitty() {
     KITTY_THEME=$(jq -r '.kitty_theme["'"$THEME"'"]' "$CONF")
-    kitten themes --reload-in=all --config-file-name=.themes.conf "$KITTY_THEME"
+    kitten themes --reload-in=all --config-file-name=.themes.conf --cache-age=30 "$KITTY_THEME"
 }
 
 set_kvantum() {
@@ -144,7 +184,9 @@ fi
 
 THEME=$(jq -r '.["'"$MODE"'_theme"]' "$CONF")
 
-if [ "$(uname)" = "Linux" ]; then
+if [ "$(uname)" = "Darwin" ]; then
+    osascript -l JavaScript -e "Application('System Events').appearancePreferences.darkMode = $([ "$MODE" = "dark" ] && echo true || echo false)" >/dev/null &
+else
     gsettings set org.gnome.desktop.interface color-scheme prefer-"$MODE" &
     set_gtk &
     # set_dunst &
@@ -152,8 +194,8 @@ if [ "$(uname)" = "Linux" ]; then
     set_cava &
     # set_spicetify &
     # set_zathura &
-else
-    osascript -l JavaScript -e "Application('System Events').appearancePreferences.darkMode = $([ "$MODE" = "dark" ] && echo true || echo false)" >/dev/null &
+
+    # sed -i "/^Theme=/c\Theme=${gtkIcon}" "${confDir}/kdeglobals"
 fi
 set_kitty &
 set_neovim &
