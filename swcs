@@ -1,0 +1,162 @@
+#!/bin/zsh
+#
+# switch system wide colorscheme on the fly
+
+CONF=~/.cache/swcs.json
+if [ ! -f "$CONF" ] || [ "$1" = "init" ]; then
+    jq -n '{
+    "mode": "light",
+    "light_theme": "light",
+    "dark_theme": "dark",
+    "light_gtk_theme": "Adwaita",
+    "dark_gtk_theme": "Adwaita-dark",
+    "light_neovim_theme": "tokyonight",
+    "dark_neovim_theme": "tokyonight",
+    "light_kitty_theme": "tokyonight",
+    "dark_kitty_theme": "tokyonight",
+    "light_kvantum_theme": "Adwaita",
+    "dark_kvantum_theme": "Adwaita-dark",
+    "light_wallpaper": ["~/pix/wallpapers/1.jpg", "center"],
+    "dark_wallpaper": ["~/pix/wallpapers/2.jpg", "center"]
+}' >"$CONF"
+    echo "created new config"
+    exit 0
+fi
+
+for arg in "$@"; do
+    case $arg in
+    -f | --force)
+        FORCE=true
+        break
+        ;;
+    esac
+done
+
+set_neovim() {
+    NEOVIM_THEME=$(jq -r '.neovim_theme["'"$THEME"'"]' "$CONF")
+    for i in ${XDG_RUNTIME_DIR:-${TMPDIR}nvim.${USER}}/*/nvim.*.0; do
+        nvim --server "$i" --remote-send "<cmd>colorscheme $NEOVIM_THEME<cr>" >/dev/null 2>&1
+        nvim --server "$i" --remote-send "<cmd>Lazy reload lualine.nvim<cr>" >/dev/null 2>&1
+    done
+
+}
+
+set_wallpaper() {
+    WALLPAPER_PATH=$(jq -r '.wallpaper["'"$THEME"'"][0]' "$CONF")
+    WALLPAPER_MODE=$(jq -r '.wallpaper["'"$THEME"'"][1]' "$CONF")
+    if [ "$(uname)" = "Linux" ]; then
+        setwall "$WALLPAPER_PATH" "$WALLPAPER_MODE" # TODO: $(find ~/pix | shuf -n 1)
+    else
+        setwall "$WALLPAPER_PATH"
+    fi
+}
+
+set_gtk() {
+    GTK_THEME=$(jq -r '.gtk_theme["'"$THEME"'"]' "$CONF")
+    sed -i "s/gtk-theme-name=.*/gtk-theme-name=$GTK_THEME/" ~/.config/gtk-3.0/settings.ini
+    import-gsettings
+}
+
+set_dunst() {
+    if ! type -p "dunst" >/dev/null; then
+        return
+    fi
+
+    unlink ~/.config/dunst/config
+    ln -s ~/.config/dunst/tokyonight ~/.config/dunst/config
+    # sed -i "s/frame_color = .*/frame_color = #b19cd9/" ~/.config/dunst/dunstrc
+}
+
+set_kitty() {
+    KITTY_THEME=$(jq -r '.kitty_theme["'"$THEME"'"]' "$CONF")
+    kitten themes --reload-in=all --config-file-name=.themes.conf "$KITTY_THEME"
+}
+
+set_kvantum() {
+    if ! type -p "kvantummanager" >/dev/null; then
+        return
+    fi
+    KVANTUM_THEME=$(jq -r '.kvantum_theme["'"$THEME"'"]' "$CONF")
+    kvantummanager --set "$KVANTUM_THEME"
+}
+
+set_cava() {
+    cp ~/.config/cava/themes/"$THEME" ~/.config/cava/config
+    pkill -USR1 cava
+}
+
+set_vscode() {
+    echo "code"
+    # jq ~/.config/Code/User/settings.json
+    # #!/bin/node
+    # var arg = process.argv[2];
+    # var path = "/home/sanchay/a.json";
+    # var settings = require(path);
+    # if (arg === "--dark" || arg === "-d")
+    #   settings["workbench.colorTheme"] = "Default Dark+";
+    # else if (arg === "--light" || arg === "-l")
+    #   settings["workbench.colorTheme"] = "Default Light+";
+    # else {
+    #   console.error("Invalid use");
+    #   return;
+    # }
+    # const fs = require("fs");
+    # try {
+    #   fs.writeFileSync(path, JSON.stringify(settings, null, 4));
+    # } catch (err) {
+    #   console.error(err);
+    # }
+}
+
+set_spicetify() {
+    if ! type -p "spicetify" >/dev/null; then
+        return
+    fi
+    spicetify config current_theme "$THEME"
+    spicetify apply
+}
+
+MODE=$1
+if [ "$MODE" = "dark" ]; then
+    notify-send --urgency=low --icon=weather-clear-night "Switching to Dark Mode" >/dev/null 2>&1
+elif [ "$MODE" = "light" ]; then
+    notify-send --urgency=low --icon=weather-clear "Switching to Light Mode" >/dev/null 2>&1
+elif [ "$MODE" = "auto" ]; then
+    curr=$(date +%H)
+
+    if [ "$curr" -ge 8 ] && [ "$curr" -lt 19 ]; then
+        MODE="light"
+    else
+        MODE="dark"
+    fi
+else
+    echo "shud be one of light, dark or auto"
+    exit 1
+fi
+
+CURR_MODE=$(jq -r '.["mode"]' "$CONF")
+if [ "$CURR_MODE" = "$MODE" ] && [ -z "$FORCE" ]; then
+    echo "already $MODE set"
+    exit 0
+else
+    jq '.["mode"] = "'"$MODE"'"' "$CONF" >"$CONF.tmp" && mv "$CONF.tmp" "$CONF"
+fi
+
+THEME=$(jq -r '.["'"$MODE"'_theme"]' "$CONF")
+
+if [ "$(uname)" = "Linux" ]; then
+    gsettings set org.gnome.desktop.interface color-scheme prefer-"$MODE" &
+    set_gtk &
+    # set_dunst &
+    set_kvantum &
+    set_cava &
+    # set_spicetify &
+    # set_zathura &
+else
+    osascript -l JavaScript -e "Application('System Events').appearancePreferences.darkMode = $([ "$MODE" = "dark" ] && echo true || echo false)" >/dev/null &
+fi
+set_kitty &
+set_neovim &
+set_wallpaper &
+
+wait
